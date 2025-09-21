@@ -1,0 +1,75 @@
+import FreeCAD
+import ObjectsFem
+from femmesh.gmshtools import GmshTools as gmshtools
+from femtools import ccxtools
+
+# constants (all in mm)
+MAX_DISPLACEMENT = 5
+INITIAL_THICKNESS = 20
+THICKNESS_DELTA = 1
+
+# relevant elements of the example project
+doc = FreeCAD.activeDocument()
+pad = doc.getObjectsByLabel("Tabletop Pad")[0]
+table = doc.getObjectsByLabel("Table")[0]
+analysis = doc.getObject("Analysis")
+mesh_name = table.Label + "_Mesh"
+
+# init thickness of the tabletop
+pad.Length.Value = INITIAL_THICKNESS
+doc.recompute()
+
+def run_fem():
+	# remove old FEM mesh
+	for object in analysis.Group:
+		if object.Name == mesh_name:
+			doc.removeObject(mesh_name)
+			break
+	
+	# create new FEM mesh
+	mesh = ObjectsFem.makeMeshGmsh(doc, mesh_name)
+	mesh.Shape = table
+	mesh.ElementOrder = "2nd"  # ElementOrder "1st" produces wrong results
+	# mesh.CharacteristicLengthMax = 100  # if you want a finer mesh
+	print("==> creating mesh...")
+	error = gmshtools(mesh).create_mesh()
+	print(error)
+	analysis.addObject(mesh)
+	
+	# run FEA
+	fea = ccxtools.FemToolsCcx()
+	fea.purge_results()
+	print("==> running FEA...")	
+	fea.run()
+	
+	# find FEA results object
+	for object in analysis.Group:
+		if object.Name == "CCX_Results":
+			fem_result = object
+			break
+	
+	# determine max displacement
+	displacement = FreeCAD.Vector()
+	for vector in fem_result.DisplacementVectors:
+		displacement.x = max(displacement.x, abs(vector.x))
+		displacement.y = max(displacement.y, abs(vector.y))
+		displacement.z = max(displacement.z, abs(vector.z))
+	return displacement
+	
+
+max_displacement = run_fem()
+print("==> max_displacement:", max_displacement)
+
+# simple loop to find a good thickness of the tabletop
+# so that the displacement is less than MAX_DISPLACEMENT
+#while max_displacement.z > MAX_DISPLACEMENT:
+#	new_thickness = pad.Length.Value + THICKNESS_DELTA
+#	print("==> setting thickness of tabletop to", new_thickness)
+#	pad.Length.Value = new_thickness
+#	doc.recompute()
+#	max_displacement = run_fem()
+#	print("==> max_displacement:", max_displacement)
+
+# TODO: solutions for faster approximation?
+	
+print("==> FEA finished")
